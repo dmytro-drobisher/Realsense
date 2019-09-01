@@ -3,8 +3,6 @@ import open3d
 import numpy as np
 import pyrealsense2 as rs
 
-ENABLE_VIEWER = False
-
 colour_image = None
 depth_image = None
 
@@ -30,18 +28,17 @@ def main():
     global colour_image
     global depth_image
     
-    if ENABLE_VIEWER:
-        # open3d visualiser
-        visualiser = open3d.visualization.Visualizer()
-        point_cloud = open3d.geometry.PointCloud()
-        point_cloud.points = open3d.utility.Vector3dVector(np.array([[i, i, i] for i in range(-5, 5)]))
-        visualiser.create_window()
-        visualiser.add_geometry(point_cloud)
+    # open3d visualiser
+    visualiser = open3d.visualization.Visualizer()
+    point_cloud = open3d.geometry.PointCloud()
+    point_cloud.points = open3d.utility.Vector3dVector(np.array([[i, i, i] for i in range(-5, 5)]))
+    visualiser.create_window()
+    visualiser.add_geometry(point_cloud)
 
     # Create windows
-    cv2.namedWindow("Colour", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Depth", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Filtered", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Colour")
+    cv2.namedWindow("Depth")
+    cv2.namedWindow("Filtered")
     #cv2.setMouseCallback("Colour", get_colour_threshold)
 
     # Camera config
@@ -57,10 +54,9 @@ def main():
     align_to = rs.stream.color
     align = rs.align(align_to)
 
-    # Filters
+    # Spatial filter
     spatial = rs.spatial_filter()
-    temporal = rs.temporal_filter(0.4, 20, 5)
-
+    
     # Get stream profile and camera intrinsics
     profile = pipeline.get_active_profile()
     depth_profile = rs.video_stream_profile(profile.get_stream(rs.stream.depth))
@@ -75,24 +71,23 @@ def main():
         current_frame = align.process(current_frame)
 
         # Get colour and depth frames
-        depth_image = np.asanyarray(temporal.process(current_frame.get_depth_frame()).get_data())
+        depth_image = np.asanyarray(spatial.process(current_frame.get_depth_frame()).get_data())
         colour_image = np.asanyarray(current_frame.get_color_frame().get_data())
 
-        if ENABLE_VIEWER:
-            # Create rgbd image
-            rgbd = open3d.geometry.create_rgbd_image_from_color_and_depth(open3d.geometry.Image(cv2.cvtColor(colour_image, cv2.COLOR_BGR2RGB)), open3d.geometry.Image(depth_image), convert_rgb_to_intensity=False)
+        # Create rgbd image
+        rgbd = open3d.geometry.create_rgbd_image_from_color_and_depth(open3d.geometry.Image(cv2.cvtColor(colour_image, cv2.COLOR_BGR2RGB)), open3d.geometry.Image(depth_image), convert_rgb_to_intensity=False)
 
-            # Create point cloud
-            pcd = open3d.geometry.create_point_cloud_from_rgbd_image(rgbd, intrinsic)
+        # Create point cloud
+        pcd = open3d.geometry.create_point_cloud_from_rgbd_image(rgbd, intrinsic)
+        
+        # Update point cloud for visualiser
+        point_cloud.points = pcd.points
+        point_cloud.colors = pcd.colors
 
-            # Update point cloud for visualiser
-            point_cloud.points = pcd.points
-            point_cloud.colors = pcd.colors
-
-            # Update visualiser
-            visualiser.update_geometry()
-            visualiser.poll_events()
-            visualiser.update_renderer()
+        # Update visualiser
+        visualiser.update_geometry()
+        visualiser.poll_events()
+        visualiser.update_renderer()
 
         # Segment the image
         if (lower_threshold is not None) and (upper_threshold is not None):
@@ -110,19 +105,12 @@ def main():
                 
                 # remove small contours
                 if cv2.contourArea(contour) > 200:
-                    # Draw new image with contour
-                    depth_mask = np.zeros_like(colour_image)
-                    cv2.fillPoly(depth_mask, np.array([contour]), [255, 255, 255])
-                    depth_mask = cv2.cvtColor(depth_mask, cv2.COLOR_BGR2GRAY)
-                    depth_pixels = np.where(depth_mask > 0)
-                    distance = np.average(depth_image[depth_pixels])
-
+                    
                     # Get centroid
                     centre = np.mean(contour, axis=0)[0].astype(int)
                     
                     # Display contours
-                    #cv2.putText(colour_image, str(depth_image[centre[1], centre[0]]) + "mm", (centre[0], centre[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-                    cv2.putText(colour_image, str(int(distance)) + "mm", (centre[0], centre[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
+                    cv2.putText(colour_image, str(depth_image[centre[1], centre[0]]) + "mm", (centre[0], centre[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
                     cv2.drawContours(colour_image, np.array([contour]), -1, [0, 255, 0])
             
             cv2.imshow("Filtered", mask)
